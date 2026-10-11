@@ -16,7 +16,7 @@ AimSmooth=18,AimFOV=150,TeamCheck=false,WallCheck=true,
 Predict=0,ShowFOV=true,FOVRainbow=false,AimHeld=false,
 SilentAim=false,SnapShoot=true,SnapDur=12,SnapUntil=0,
 TargetPriority="Tâm Ngắm",AutoFireOnAim=false,TriggerBot=false,HitSound=false,
-Magic=false,MagicRate=8,
+Magic=false,MagicRate=8,FireRateBoost=false,AutoReload=false,
 EspOn=false,EspBox=false,EspName=true,EspDist=true,EspHP=true,
 EspTracer=false,EspSkel=false,EspChams=false,EspArrow=false,
 EspPos="Trên",EspCol=Color3.fromRGB(255,60,60),EspRainbow=false,EspMax=1500,
@@ -24,7 +24,8 @@ SpeedOn=false,SpeedVal=32,JumpOn=false,JumpVal=80,InfJump=false,Bunny=false,
 FlyOn=false,FlySpd=80,Noclip=false,AntiVoid=false,
 FOVChg=false,FOVVal=90,FullBright=false,NoFog=false,RainbowChar=false,
 WMOn=true,Notify=true,CurTarget=nil}
-local CFG="oneshot_v9.json"
+local CFG="oneshot_v10.json"
+local conns={}  -- lưu kết nối để ngắt khi unload
 local function notify(t,x,d)
 if not S.Notify then return end
 pcall(function() game:GetService("StarterGui"):SetCore("SendNotification",{Title=t,Text=x,Duration=d or 3}) end)
@@ -58,14 +59,132 @@ return v[math.random(1,#v)]
 elseif which=="Gần Nhất" then return char:FindFirstChild("HumanoidRootPart")
 else return char:FindFirstChild("Head") end
 end
-local Gui=Instance.new("ScreenGui") Gui.Name="OneShotV9"
+--===== WEAPON MANAGER + HOOK (tham khảo scriptblox) =====
+local WeaponManager=nil
+local old_cast=nil
+local OriginalConstants={}
+
+local function getWeaponManager()
+    if WeaponManager then return WeaponManager end
+    pcall(function()
+        local rs=game:GetService("ReplicatedStorage")
+        local common=rs:FindFirstChild("Common")
+        if not common then return end
+        local managers=common:FindFirstChild("Managers")
+        if not managers then return end
+        local wm=managers:FindFirstChild("WeaponManager")
+        if wm then
+            WeaponManager=require(wm)
+            -- Lưu constants gốc để khôi phục sau
+            if WeaponManager.Constants then
+                for k,v in pairs(WeaponManager.Constants) do
+                    OriginalConstants[k]=v
+                end
+            end
+        end
+    end)
+    return WeaponManager
+end
+
+-- Hook cast: thay đổi hướng đạn + tốc độ + tầm bắn
+local function hookCast()
+    local wm=getWeaponManager()
+    if not wm or not wm.cast then return false end
+    if old_cast then return true end
+    local success=pcall(function()
+        old_cast=hookfunction(wm.cast,function(origin,direction,bullet_speed,max_distance,...)
+            -- Đạn ma thuật: nếu có target, ghi đè hướng bay
+            if S.Magic and S.CurTarget and S.CurTarget.Parent then
+                local head=S.CurTarget
+                -- Kiểm tra tường (nếu bật WallCheck)
+                local canFire=true
+                if S.WallCheck then
+                    local ig={LP.Character}
+                    local hit=WS:FindPartOnRayWithIgnoreList(
+                        Ray.new(origin,head.Position-origin),ig)
+                    if hit and not hit:IsDescendantOf(head.Parent) then
+                        canFire=false
+                    end
+                end
+                if canFire then
+                    direction=(head.Position-origin).Unit
+                    bullet_speed=9e9
+                    max_distance=9e999
+                end
+            end
+            return old_cast(origin,direction,bullet_speed,max_distance,...)
+        end)
+    end)
+    return success
+end
+
+-- Gỡ hook
+local function unhookCast()
+    if old_cast then
+        pcall(function()
+            local wm=getWeaponManager()
+            if wm and wm.cast then
+                hookfunction(wm.cast,old_cast)
+            end
+        end)
+        old_cast=nil
+    end
+end
+
+-- Áp dụng mod súng (tăng tốc bắn, vô hạn đạn)
+local function applyWeaponMods(on)
+    local wm=getWeaponManager()
+    if not wm or not wm.Constants then return end
+    if on then
+        pcall(function()
+            wm.Constants.DEFAULT_PISTOL_RELOAD_TIME=0
+            wm.Constants.DEFAULT_PISTOL_FIRERATE=500
+            wm.Constants.DEFAULT_RELOAD_TIME=0
+            wm.Constants.DEFAULT_MAGAZINE=9e9
+        end)
+    else
+        pcall(function()
+            for k,v in pairs(OriginalConstants) do
+                wm.Constants[k]=v
+            end
+        end)
+    end
+end
+-- Tham khảo scriptblox: tăng tốc bắn, giảm nạp
+local WeaponManager=nil
+pcall(function()
+local rs=game:GetService("ReplicatedStorage")
+local wm=rs:FindFirstChild("Common") and rs.Common:FindFirstChild("Managers") and rs.Common.Managers:FindFirstChild("WeaponManager")
+if wm then WeaponManager=require(wm) end
+end)
+local originalWeaponConstants=nil
+local function applyWeaponMods(on)
+if not WeaponManager or not WeaponManager.Constants then return end
+if on then
+if not originalWeaponConstants then
+originalWeaponConstants={}
+for k,v in pairs(WeaponManager.Constants) do originalWeaponConstants[k]=v end
+end
+pcall(function()
+WeaponManager.Constants.DEFAULT_PISTOL_FIRERATE=500
+WeaponManager.Constants.DEFAULT_PISTOL_RELOAD_TIME=0
+WeaponManager.Constants.DEFAULT_RELOAD_TIME=0
+WeaponManager.Constants.DEFAULT_MAGAZINE=9e9
+end)
+else
+if originalWeaponConstants then
+for k,v in pairs(originalWeaponConstants) do
+pcall(function() WeaponManager.Constants[k]=v end) end
+end
+end
+end
+local Gui=Instance.new("ScreenGui") Gui.Name="OneShotV10"
 Gui.ResetOnSpawn=false Gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 Gui.IgnoreGuiInset=true
 pcall(function() Gui.Parent=CoreGui end)
 if not Gui.Parent then Gui.Parent=LP:WaitForChild("PlayerGui") end
 local blur=Instance.new("BlurEffect") blur.Size=0 blur.Parent=Light
 
--- Hàm check input dùng chung cho mobile + PC
 local function isPress(i)
 return i.UserInputType==Enum.UserInputType.MouseButton1
     or i.UserInputType==Enum.UserInputType.Touch
@@ -90,11 +209,10 @@ TitleBar.Size=UDim2.new(1,0,0,32) TitleBar.BackgroundTransparency=1
 TitleBar.Active=true TitleBar.Parent=Main
 local tLbl=Instance.new("TextLabel")
 tLbl.Size=UDim2.new(1,-100,1,0) tLbl.Position=UDim2.new(0,12,0,0)
-tLbl.BackgroundTransparency=1 tLbl.Text="ONE SHOT v9"
+tLbl.BackgroundTransparency=1 tLbl.Text="ONE SHOT v10"
 tLbl.TextColor3=Color3.fromRGB(255,255,255) tLbl.Font=Enum.Font.GothamBold
 tLbl.TextSize=15 tLbl.TextXAlignment=Enum.TextXAlignment.Left tLbl.Parent=TitleBar
 
--- Kéo title bar
 local dragging=false local dStart,sPos
 TitleBar.InputBegan:Connect(function(i)
 if isPress(i) then dragging=true dStart=i.Position sPos=Main.Position end end)
@@ -106,7 +224,6 @@ end end)
 UIS.InputEnded:Connect(function(i)
 if isPress(i) then dragging=false end end)
 
--- Thanh handle mini (sát mép trên)
 local Handle=Instance.new("Frame")
 Handle.Size=UDim2.new(0,180,0,34) Handle.Position=UDim2.new(0.5,-90,0,4)
 Handle.BackgroundColor3=Color3.fromRGB(18,18,22) Handle.BackgroundTransparency=0.1
@@ -134,7 +251,6 @@ if hMoved<8 then
 Main.Visible=true Handle.Visible=false
 Tween:Create(blur,TweenInfo.new(0.3),{Size=0}):Play() end end end)
 
--- Nút − ×
 local function cBtn(t,x,cb)
 local b=Instance.new("TextButton") b.Size=UDim2.new(0,24,0,24) b.Position=UDim2.new(1,x,0,4)
 b.BackgroundColor3=Color3.fromRGB(40,40,48) b.Text=t b.TextColor3=Color3.fromRGB(255,255,255)
@@ -144,7 +260,7 @@ b.MouseButton1Click:Connect(cb) return b end
 cBtn("−",-60,function()
 Main.Visible=false Handle.Visible=true
 Tween:Create(blur,TweenInfo.new(0.3),{Size=16}):Play() end)
-cBtn("×",-32,function() Gui:Destroy() end)
+cBtn("×",-32,function() --[[ unload ]] end)
 
 local Side=Instance.new("Frame") Side.Size=UDim2.new(0,130,1,-42) Side.Position=UDim2.new(0,0,0,42)
 Side.BackgroundColor3=Color3.fromRGB(25,25,30) Side.BorderSizePixel=0 Side.Parent=Main
@@ -197,7 +313,6 @@ local st=d b.MouseButton1Click:Connect(function() st=not st
 b.BackgroundColor3=st and Color3.fromRGB(0,170,255) or Color3.fromRGB(50,50,58)
 b.Text=st and "BẬT" or "TẮT" cb(st) end) return f end
 
--- SLIDER (Fix mobile)
 local function sld(pg,t,mn,mx,d,cb)
 local f=Instance.new("Frame") f.Size=UDim2.new(1,-10,0,44)
 f.BackgroundColor3=Color3.fromRGB(28,28,34) f.BorderSizePixel=0 f.Parent=pg
@@ -211,13 +326,11 @@ bar.Size=UDim2.new(1,-20,0,14) bar.Position=UDim2.new(0,10,0,25)
 bar.BackgroundColor3=Color3.fromRGB(50,50,58) bar.BorderSizePixel=0
 bar.Active=true bar.Parent=f
 Instance.new("UICorner",bar).CornerRadius=UDim.new(0,7)
-
 local fill=Instance.new("Frame")
 fill.Size=UDim2.new((d-mn)/(mx-mn),0,1,0)
 fill.BackgroundColor3=Color3.fromRGB(0,170,255) fill.BorderSizePixel=0
 fill.Active=false fill.Parent=bar
 Instance.new("UICorner",fill).CornerRadius=UDim.new(0,7)
-
 local drg=false
 local function upd(x)
 local r=math.clamp((x-bar.AbsolutePosition.X)/math.max(bar.AbsoluteSize.X,1),0,1)
@@ -231,7 +344,6 @@ UIS.InputEnded:Connect(function(i)
 if isPress(i) and drg then drg=false end end)
 return f end
 
--- DROPDOWN (list gắn ra ngoài Gui, không bị che)
 local function drp(pg,t,opts,d,cb)
 local f=Instance.new("Frame") f.Size=UDim2.new(1,-10,0,32)
 f.BackgroundColor3=Color3.fromRGB(28,28,34) f.BorderSizePixel=0 f.Parent=pg
@@ -240,24 +352,18 @@ local b=Instance.new("TextButton") b.Size=UDim2.new(1,0,1,0) b.BackgroundTranspa
 b.Text=t..": "..d b.TextColor3=Color3.fromRGB(230,230,230)
 b.Font=Enum.Font.Gotham b.TextSize=13 b.TextXAlignment=Enum.TextXAlignment.Left b.Parent=f
 Instance.new("UIPadding",b).PaddingLeft=UDim.new(0,10)
-
 local ls=Instance.new("Frame")
 ls.BackgroundColor3=Color3.fromRGB(22,22,28)
-ls.BorderSizePixel=0 ls.Visible=false ls.ZIndex=9999
-ls.Parent=Gui
+ls.BorderSizePixel=0 ls.Visible=false ls.ZIndex=9999 ls.Parent=Gui
 Instance.new("UICorner",ls).CornerRadius=UDim.new(0,6)
 local st=Instance.new("UIStroke",ls) st.Color=Color3.fromRGB(0,170,255) st.Thickness=1
-
-local objs={}
 for i,o in ipairs(opts) do
 local ob=Instance.new("TextButton")
 ob.Size=UDim2.new(1,0,0,28) ob.Position=UDim2.new(0,0,0,(i-1)*28)
 ob.BackgroundTransparency=1 ob.Text=o ob.TextColor3=Color3.fromRGB(220,220,220)
 ob.Font=Enum.Font.Gotham ob.TextSize=13 ob.ZIndex=10000 ob.Parent=ls
 ob.MouseButton1Click:Connect(function()
-b.Text=t..": "..o ls.Visible=false cb(o) end)
-table.insert(objs,ob) end
-
+b.Text=t..": "..o ls.Visible=false cb(o) end) end
 b.MouseButton1Click:Connect(function()
 if ls.Visible then ls.Visible=false return end
 ls.Size=UDim2.new(0,f.AbsoluteSize.X,0,#opts*28)
@@ -387,7 +493,7 @@ end)
 notify("Bay","WASD di chuyển, Space lên, Ctrl xuống")
 end
 
-UIS.InputBegan:Connect(function(i,gp)
+local c1=UIS.InputBegan:Connect(function(i,gp)
 if gp then return end
 local k=i.KeyCode
 if k==Enum.KeyCode.W then FK.W=true end
@@ -396,7 +502,7 @@ if k==Enum.KeyCode.S then FK.S=true end
 if k==Enum.KeyCode.D then FK.D=true end
 if k==Enum.KeyCode.Space then FK.SP=true end
 if k==Enum.KeyCode.LeftControl then FK.CT=true end end)
-UIS.InputEnded:Connect(function(i)
+local c2=UIS.InputEnded:Connect(function(i)
 local k=i.KeyCode
 if k==Enum.KeyCode.W then FK.W=false end
 if k==Enum.KeyCode.A then FK.A=false end
@@ -404,6 +510,68 @@ if k==Enum.KeyCode.S then FK.S=false end
 if k==Enum.KeyCode.D then FK.D=false end
 if k==Enum.KeyCode.Space then FK.SP=false end
 if k==Enum.KeyCode.LeftControl then FK.CT=false end end)
+table.insert(conns,c1) table.insert(conns,c2)
+local CP=Pages["Chiến Đấu"]
+sec(CP,"TỰ ĐỘNG")
+tgl(CP,"Bắn Khi Thấy Tâm",false,function(v) S.TriggerBot=v end)
+sec(CP,"ĐẠN MA THUẬT (SILENT AIM)")
+tgl(CP,"Bật Đạn Ma Thuật",false,function(v)
+    S.Magic=v
+    if v then
+        local ok=hookCast()
+        if ok then notify("Đạn Ma Thuật","Đã hook WeaponManager thành công!")
+        else notify("Đạn Ma Thuật","Không tìm thấy WeaponManager!") end
+    else
+        unhookCast()
+    end
+end)
+sld(CP,"Tốc Độ Bắn x10ms",3,50,8,function(v) S.MagicRate=v end)
+sec(CP,"MOD SÚNG")
+tgl(CP,"Tăng Tốc Bắn + Vô Hạn Đạn",false,function(v)
+    S.FireRateBoost=v
+    applyWeaponMods(v)
+    if v then notify("Mod Súng","Đã áp dụng (nếu game hỗ trợ)") end
+end)
+
+local VP=Pages["Hiển Thị"]
+sec(VP,"CAMERA")
+tgl(VP,"Đổi FOV",false,function(v) S.FOVChg=v
+Cam.FieldOfView=v and S.FOVVal or 70 end)
+sld(VP,"Giá Trị FOV",70,120,90,function(v) S.FOVVal=v
+if S.FOVChg then Cam.FieldOfView=v end end)
+sec(VP,"ÁNH SÁNG")
+tgl(VP,"Sáng Toàn Map",false,function(v) S.FullBright=v
+if v then Light.Brightness=3 Light.ClockTime=14
+Light.Ambient=Color3.fromRGB(180,180,180)
+Light.OutdoorAmbient=Color3.fromRGB(180,180,180)
+else Light.Brightness=1 end end)
+tgl(VP,"Xóa Sương Mù",false,function(v) S.NoFog=v
+Light.FogEnd=v and 1e6 or 100000 end)
+sec(VP,"NHÂN VẬT")
+tgl(VP,"Nhân Vật Cầu Vồng",false,function(v) S.RainbowChar=v end)
+sec(VP,"GIAO DIỆN")
+tgl(VP,"Watermark",true,function(v) S.WMOn=v WM.Visible=v end)
+tgl(VP,"Thông Báo",true,function(v) S.Notify=v end)
+
+local CgP=Pages["Cấu Hình"]
+sec(CgP,"LƯU / TẢI")
+btn(CgP,"Lưu Cấu Hình",function()
+local d={} for k,v in pairs(S) do
+if type(v)=="number" or type(v)=="boolean" or type(v)=="string" then d[k]=v end end
+if writefile then writefile(CFG,Http:JSONEncode(d)) notify("Cấu Hình","Đã lưu!") end end)
+btn(CgP,"Tải Cấu Hình",function()
+if isfile and isfile(CFG) and readfile then
+local ok,d=pcall(function() return Http:JSONDecode(readfile(CFG)) end)
+if ok then for k,v in pairs(d) do S[k]=v end notify("Cấu Hình","Đã tải!") end end end)
+btn(CgP,"Gỡ Script",function() unload() end)
+
+local WM=Instance.new("TextLabel")
+WM.Size=UDim2.new(0,280,0,26) WM.Position=UDim2.new(0,12,0,12)
+WM.BackgroundColor3=Color3.fromRGB(15,15,20) WM.BackgroundTransparency=0.3
+WM.TextColor3=Color3.fromRGB(0,170,255) WM.Font=Enum.Font.GothamBold
+WM.TextSize=13 WM.Text="ONE SHOT v11" WM.Parent=Gui
+Instance.new("UICorner",WM).CornerRadius=UDim.new(0,6)
+local WMS=Instance.new("UIStroke",WM) WMS.Color=Color3.fromRGB(0,170,255) WMS.Transparency=0.3
 local EspData={}
 local function newEsp(plr)
 local bg=Instance.new("BillboardGui")
@@ -455,61 +623,95 @@ EspData[plr]=nil end end
 
 for _,p in ipairs(Players:GetPlayers()) do
 if p~=LP then pcall(newEsp,p) end end
-Players.PlayerAdded:Connect(function(p) if p~=LP then pcall(newEsp,p) end end)
-Players.PlayerRemoving:Connect(delEsp)
--- ===== TÌM MỤC TIÊU =====
+local c3=Players.PlayerAdded:Connect(function(p) if p~=LP then pcall(newEsp,p) end end)
+local c4=Players.PlayerRemoving:Connect(delEsp)
+table.insert(conns,c3) table.insert(conns,c4)
+-- Hàm unload: reset mọi thứ
+function unload()
+    unhookCast()
+    applyWeaponMods(false)
+    local h=getHum()
+    if h then h.WalkSpeed=16 h.UseJumpPower=false h.JumpPower=50 h.PlatformStand=false end
+    Cam.FieldOfView=70
+    Light.Brightness=1 Light.FogEnd=100000 Light.ClockTime=14
+    Light.Ambient=Color3.fromRGB(70,70,70) Light.OutdoorAmbient=Color3.fromRGB(128,128,128)
+    if flyConn then flyConn:Disconnect() flyConn=nil end
+    if flyLV then flyLV:Destroy() flyLV=nil end
+    if flyAtt then flyAtt:Destroy() flyAtt=nil end
+    for plr,d in pairs(EspData) do
+        if d.bg then d.bg:Destroy() end
+        if d.ch then d.ch:Destroy() end
+        if d.tracer then d.tracer:Remove() end
+        if d.arrow then d.arrow:Remove() end
+        if d.skel then for _,l in ipairs(d.skel) do l:Remove() end end
+    end
+    EspData={}
+    if Fov then Fov:Remove() end
+    for _,c in ipairs(conns) do pcall(function() c:Disconnect() end) end
+    conns={}
+    if Gui then Gui:Destroy() end
+    if blur then blur:Destroy() end
+    notify("One Shot v11","Đã gỡ script và khôi phục mặc định")
+end
+
+cBtn("×",-32,function() unload() end)
+
 local function getTarget()
-local best,bestScore=nil,math.huge
-local camPos=Cam.CFrame.Position
-local center=Vector2.new(Cam.ViewportSize.X/2,Cam.ViewportSize.Y/2)
-for _,p in ipairs(Players:GetPlayers()) do
-if p~=LP and isAlive(p) and not (S.TeamCheck and p.Team==LP.Team) then
-local char=p.Character local hum=char:FindFirstChildOfClass("Humanoid")
-if hum then
-local part=partOf(char,S.AimPart)
-if part then
-local sp,on=Cam:WorldToViewportPoint(part.Position)
-if on then
-local dCross=(Vector2.new(sp.X,sp.Y)-center).Magnitude
-if dCross<S.AimFOV then
-local score
-if S.TargetPriority=="Tâm Ngắm" then score=dCross
-elseif S.TargetPriority=="Khoảng Cách" then score=(camPos-part.Position).Magnitude
-else score=hum.Health end
-if score<bestScore then
-local ok=true
-if S.WallCheck and not isVis(part,{char}) then ok=false end
-if ok then best=part bestScore=score end end end end end end end end
-return best
+    local best,bestScore=nil,math.huge
+    local camPos=Cam.CFrame.Position
+    local center=Vector2.new(Cam.ViewportSize.X/2,Cam.ViewportSize.Y/2)
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p~=LP and isAlive(p) and not (S.TeamCheck and p.Team==LP.Team) then
+            local char=p.Character local hum=char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                local part=partOf(char,S.AimPart)
+                if part then
+                    local sp,on=Cam:WorldToViewportPoint(part.Position)
+                    if on then
+                        local dCross=(Vector2.new(sp.X,sp.Y)-center).Magnitude
+                        if dCross<S.AimFOV then
+                            local score
+                            if S.TargetPriority=="Tâm Ngắm" then score=dCross
+                            elseif S.TargetPriority=="Khoảng Cách" then score=(camPos-part.Position).Magnitude
+                            else score=hum.Health end
+                            if score<bestScore then
+                                local ok=true
+                                if S.WallCheck and not isVis(part,{char}) then ok=false end
+                                if ok then best=part bestScore=score end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best
 end
 
--- ===== INPUT =====
-local function isPress(i)
-return i.UserInputType==Enum.UserInputType.MouseButton1
-    or i.UserInputType==Enum.UserInputType.Touch
-end
+local c5=UIS.InputBegan:Connect(function(i,gp)
+    if gp then return end
+    if i.KeyCode==S.AimKey then
+        if S.AimMode=="Giữ" then S.AimHeld=true else S.AimHeld=not S.AimHeld end
+    end
+    if i.UserInputType==Enum.UserInputType.MouseButton1 and S.SnapShoot then
+        S.SnapUntil=tick()+S.SnapDur/100
+    end
+end)
+local c6=UIS.InputEnded:Connect(function(i)
+    if i.KeyCode==S.AimKey and S.AimMode=="Giữ" then S.AimHeld=false end
+end)
+table.insert(conns,c5) table.insert(conns,c6)
 
-UIS.InputBegan:Connect(function(i,gp)
-if gp then return end
-if i.KeyCode==S.AimKey then
-if S.AimMode=="Giữ" then S.AimHeld=true else S.AimHeld=not S.AimHeld end end
-if i.UserInputType==Enum.UserInputType.MouseButton1 and S.SnapShoot then
-S.SnapUntil=tick()+S.SnapDur/100 end end)
-UIS.InputEnded:Connect(function(i)
-if i.KeyCode==S.AimKey and S.AimMode=="Giữ" then S.AimHeld=false end end)
-
--- ===== HÀM =====
 local function getTool() local c=LP.Character if not c then return nil end
-return c:FindFirstChildOfClass("Tool") end
+    return c:FindFirstChildOfClass("Tool") end
 local function fireTool() local t=getTool() if t then pcall(function() t:Activate() end) end end
 local function sendM1()
-pcall(function() VIM:SendMouseButtonEvent(0,0,1,true,game,1)
-task.wait(0.03) VIM:SendMouseButtonEvent(0,0,1,false,game,1) end) end
+    pcall(function() VIM:SendMouseButtonEvent(0,0,1,true,game,1)
+    task.wait(0.03) VIM:SendMouseButtonEvent(0,0,1,false,game,1) end) end
 
 local hitSnd=Instance.new("Sound")
 hitSnd.SoundId="rbxassetid://5656678979" hitSnd.Volume=1 hitSnd.Parent=Gui
 
--- ===== XƯƠNG R15/R6 =====
 local R15={{"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
 {"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
 {"UpperTorso","RightUpperArm"},{"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
@@ -518,187 +720,217 @@ local R15={{"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
 local R6={{"Head","Torso"},{"Torso","Left Arm"},{"Torso","Right Arm"},
 {"Torso","Left Leg"},{"Torso","Right Leg"}}
 
--- ===== VÒNG LẶP CHÍNH =====
 local lastMagic=0
-RS.RenderStepped:Connect(function(dt)
--- Vòng ngắm
-if S.ShowFOV and S.AimOn then
-Fov.Visible=true
-Fov.Position=Vector2.new(Cam.ViewportSize.X/2,Cam.ViewportSize.Y/2)
-Fov.Radius=S.AimFOV
-if S.FOVRainbow then Fov.Color=rainbow() else Fov.Color=Color3.fromRGB(0,170,255) end
-else Fov.Visible=false end
+local c7=RS.RenderStepped:Connect(function(dt)
+    -- Vòng ngắm
+    if S.ShowFOV and S.AimOn then
+        Fov.Visible=true
+        Fov.Position=Vector2.new(Cam.ViewportSize.X/2,Cam.ViewportSize.Y/2)
+        Fov.Radius=S.AimFOV
+        if S.FOVRainbow then Fov.Color=rainbow() else Fov.Color=Color3.fromRGB(0,170,255) end
+    else Fov.Visible=false end
 
--- Tìm mục tiêu
-local target=getTarget() S.CurTarget=target
-local aiming=S.AimOn and (S.AimHeld or S.AimMode=="Bật Tắt")
-local snapping=tick()<S.SnapUntil
+    local target=getTarget() S.CurTarget=target
+    local aiming=S.AimOn and (S.AimHeld or S.AimMode=="Bật Tắt")
+    local snapping=tick()<S.SnapUntil
 
--- Đạn ma thuật: tự lia + bắn liên tục khi thấy địch
-local magicAiming=false
-if S.Magic and target then
-local origin=Cam.CFrame.Position
-local ig={LP.Character}
-local hit=WS:FindPartOnRayWithIgnoreList(Ray.new(origin,target.Position-origin),ig)
-local visible=hit==target or (hit and hit:IsDescendantOf(target.Parent))
-if visible then
-magicAiming=true
-Cam.CFrame=CFrame.new(origin,target.Position)
-if tick()-lastMagic>(S.MagicRate/100) then
-lastMagic=tick() fireTool() end end end
+    -- AIM THƯỜNG (không dùng silent aim)
+    if target and (aiming or snapping) and not S.Magic then
+        local aimPos=target.Position
+        if S.Predict>0 then
+            local v=target.AssemblyLinearVelocity or Vector3.zero
+            aimPos=aimPos+v*(S.Predict/100)
+        end
+        if not S.SilentAim then
+            local alpha=1-math.exp(-(100/math.max(S.AimSmooth,1))*dt)
+            Cam.CFrame=Cam.CFrame:Lerp(CFrame.new(Cam.CFrame.Position,aimPos),alpha)
+        end
+        if S.AutoFireOnAim and aiming then fireTool() end
+    end
 
--- Aim thường
-if target and (aiming or snapping) and not magicAiming then
-local aimPos=target.Position
-if S.Predict>0 then
-local v=target.AssemblyLinearVelocity or Vector3.zero
-aimPos=aimPos+v*(S.Predict/100) end
-if not S.SilentAim then
-local alpha=1-math.exp(-(100/math.max(S.AimSmooth,1))*dt)
-Cam.CFrame=Cam.CFrame:Lerp(CFrame.new(Cam.CFrame.Position,aimPos),alpha)
-end
-if S.AutoFireOnAim and aiming then fireTool() end
-end
+    -- ĐẠN MA THUẬT: dùng hook WeaponManager, không cần lia camera
+    -- Hook đã được cài trong hookCast(), giờ chỉ cần fire liên tục
+    if S.Magic and target and tick()-lastMagic>(S.MagicRate/100) then
+        lastMagic=tick()
+        fireTool()  -- hook sẽ tự đổi hướng đạn về đầu địch
+    end
 
--- ESP
-local camCenter=Vector2.new(Cam.ViewportSize.X/2,Cam.ViewportSize.Y/2)
-for plr,d in pairs(EspData) do
-local hide=not plr.Parent or not plr.Character or not isAlive(plr) or not S.EspOn
-if hide then
-d.bg.Enabled=false
-if d.ch then d.ch.FillTransparency=1 d.ch.OutlineTransparency=1 end
-d.tracer.Visible=false d.arrow.Visible=false
-for _,l in ipairs(d.skel) do l.Visible=false end
-else
-local char=plr.Character
-local head=char:FindFirstChild("Head")
-local hrp=char:FindFirstChild("HumanoidRootPart")
-local hum=char:FindFirstChildOfClass("Humanoid")
-if not head or not hrp or not hum then d.bg.Enabled=false
-else
-local dist=(Cam.CFrame.Position-head.Position).Magnitude
-if dist>S.EspMax then
-d.bg.Enabled=false d.tracer.Visible=false d.arrow.Visible=false
-for _,l in ipairs(d.skel) do l.Visible=false end
-else
-d.bg.Enabled=true
-local col=S.EspRainbow and rainbow() or S.EspCol
-d.name.Visible=S.EspName d.name.Text=plr.Name d.name.TextColor3=col
-d.dist.Visible=S.EspDist
-d.dist.Text=string.format("[%d m]",math.floor(dist))
-d.dist.TextColor3=col
-d.hpBG.Visible=S.EspHP
-local r=math.clamp(hum.Health/math.max(hum.MaxHealth,1),0,1)
-d.hp.Size=UDim2.new(r,0,1,0)
-d.hp.BackgroundColor3=Color3.fromRGB(255*(1-r),255*r,0)
-if S.EspPos=="Trên" then d.bg.StudsOffsetWorldSpace=Vector3.new(0,3.2,0)
-elseif S.EspPos=="Giữa" then d.bg.StudsOffsetWorldSpace=Vector3.new(0,1.5,0)
-else d.bg.StudsOffsetWorldSpace=Vector3.new(0,0,0) end
-if S.EspChams then
-d.ch.FillColor=col d.ch.OutlineColor=col
-d.ch.FillTransparency=0.55 d.ch.OutlineTransparency=0
-else d.ch.FillTransparency=1 d.ch.OutlineTransparency=1 end
-if S.EspTracer then
-local hp2=w2s(head.Position)
-d.tracer.Color=col d.tracer.Visible=true
-d.tracer.From=Vector2.new(Cam.ViewportSize.X/2,Cam.ViewportSize.Y)
-d.tracer.To=hp2
-else d.tracer.Visible=false end
-local sp,on=w2s(head.Position)
-if S.EspArrow and not on then
-local dir=sp-camCenter
-if dir.Magnitude>0 then
-dir=dir.Unit
-local pos=camCenter+dir*math.min(Cam.ViewportSize.X,Cam.ViewportSize.Y)*0.42
-local perp=Vector2.new(-dir.Y,dir.X)
-d.arrow.PointA=pos+dir*12
-d.arrow.PointB=pos-dir*6+perp*7
-d.arrow.PointC=pos-dir*6-perp*7
-d.arrow.Color=col d.arrow.Visible=true end
-else d.arrow.Visible=false end
-if S.EspSkel then
-for _,l in ipairs(d.skel) do l.Visible=false end
-local pairs2=nil
-if char:FindFirstChild("UpperTorso") then pairs2=R15
-elseif char:FindFirstChild("Torso") then pairs2=R6 end
-if pairs2 then
-for i,pair in ipairs(pairs2) do
-local a=char:FindFirstChild(pair[1])
-local b=char:FindFirstChild(pair[2])
-if a and b and d.skel[i] then
-local ap,aon=w2s(a.Position)
-local bp,bon=w2s(b.Position)
-if aon and bon then
-d.skel[i].From=ap d.skel[i].To=bp
-d.skel[i].Color=col d.skel[i].Visible=true end end end end
-end
-end end end end
+    -- ESP (giữ nguyên như cũ)
+    local camCenter=Vector2.new(Cam.ViewportSize.X/2,Cam.ViewportSize.Y/2)
+    for plr,d in pairs(EspData) do
+        local hide=not plr.Parent or not plr.Character or not isAlive(plr) or not S.EspOn
+        if hide then
+            d.bg.Enabled=false
+            if d.ch then d.ch.FillTransparency=1 d.ch.OutlineTransparency=1 end
+            d.tracer.Visible=false d.arrow.Visible=false
+            for _,l in ipairs(d.skel) do l.Visible=false end
+        else
+            local char=plr.Character
+            local head=char:FindFirstChild("Head")
+            local hrp=char:FindFirstChild("HumanoidRootPart")
+            local hum=char:FindFirstChildOfClass("Humanoid")
+            if not head or not hrp or not hum then d.bg.Enabled=false
+            else
+                local dist=(Cam.CFrame.Position-head.Position).Magnitude
+                if dist>S.EspMax then
+                    d.bg.Enabled=false d.tracer.Visible=false d.arrow.Visible=false
+                    for _,l in ipairs(d.skel) do l.Visible=false end
+                else
+                    d.bg.Enabled=true
+                    local col=S.EspRainbow and rainbow() or S.EspCol
+                    d.name.Visible=S.EspName d.name.Text=plr.Name d.name.TextColor3=col
+                    d.dist.Visible=S.EspDist
+                    d.dist.Text=string.format("[%d m]",math.floor(dist))
+                    d.dist.TextColor3=col
+                    d.hpBG.Visible=S.EspHP
+                    local r=math.clamp(hum.Health/math.max(hum.MaxHealth,1),0,1)
+                    d.hp.Size=UDim2.new(r,0,1,0)
+                    d.hp.BackgroundColor3=Color3.fromRGB(255*(1-r),255*r,0)
+                    if S.EspPos=="Trên" then d.bg.StudsOffsetWorldSpace=Vector3.new(0,3.2,0)
+                    elseif S.EspPos=="Giữa" then d.bg.StudsOffsetWorldSpace=Vector3.new(0,1.5,0)
+                    else d.bg.StudsOffsetWorldSpace=Vector3.new(0,0,0) end
+                    if S.EspChams then
+                        d.ch.FillColor=col d.ch.OutlineColor=col
+                        d.ch.FillTransparency=0.55 d.ch.OutlineTransparency=0
+                    else d.ch.FillTransparency=1 d.ch.OutlineTransparency=1 end
+                    if S.EspTracer then
+                        local hp2=w2s(head.Position)
+                        d.tracer.Color=col d.tracer.Visible=true
+                        d.tracer.From=Vector2.new(Cam.ViewportSize.X/2,Cam.ViewportSize.Y)
+                        d.tracer.To=hp2
+                    else d.tracer.Visible=false end
+                    local sp,on=w2s(head.Position)
+                    if S.EspArrow and not on then
+                        local dir=sp-camCenter
+                        if dir.Magnitude>0 then
+                            dir=dir.Unit
+                            local pos=camCenter+dir*math.min(Cam.ViewportSize.X,Cam.ViewportSize.Y)*0.42
+                            local perp=Vector2.new(-dir.Y,dir.X)
+                            d.arrow.PointA=pos+dir*12
+                            d.arrow.PointB=pos-dir*6+perp*7
+                            d.arrow.PointC=pos-dir*6-perp*7
+                            d.arrow.Color=col d.arrow.Visible=true
+                        end
+                    else d.arrow.Visible=false end
+                    if S.EspSkel then
+                        for _,l in ipairs(d.skel) do l.Visible=false end
+                        local pairs2=nil
+                        if char:FindFirstChild("UpperTorso") then pairs2=R15
+                        elseif char:FindFirstChild("Torso") then pairs2=R6 end
+                        if pairs2 then
+                            for i,pair in ipairs(pairs2) do
+                                local a=char:FindFirstChild(pair[1])
+                                local b=char:FindFirstChild(pair[2])
+                                if a and b and d.skel[i] then
+                                    local ap,aon=w2s(a.Position)
+                                    local bp,bon=w2s(b.Position)
+                                    if aon and bon then
+                                        d.skel[i].From=ap d.skel[i].To=bp
+                                        d.skel[i].Color=col d.skel[i].Visible=true
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
 
--- Âm trúng đích
-if S.HitSound and target then
-local sp,on=w2s(target.Position)
-if on and (sp-camCenter).Magnitude<15 then
-if not hitSnd.IsPlaying then hitSnd:Play() end end end
+    -- Âm trúng đích
+    if S.HitSound and target then
+        local sp,on=w2s(target.Position)
+        if on and (sp-camCenter).Magnitude<15 then
+            if not hitSnd.IsPlaying then hitSnd:Play() end
+        end
+    end
 
--- Tốc độ
-if S.SpeedOn then
-local h=getHum()
-if h and h.WalkSpeed~=S.SpeedVal then h.WalkSpeed=S.SpeedVal end end
+    -- Tốc độ
+    if S.SpeedOn then
+        local h=getHum()
+        if h and h.WalkSpeed~=S.SpeedVal then h.WalkSpeed=S.SpeedVal end
+    end
 
--- Nhảy
-if S.JumpOn then
-local h=getHum()
-if h and h.JumpPower~=S.JumpVal then h.UseJumpPower=true h.JumpPower=S.JumpVal end end
+    -- Nhảy
+    if S.JumpOn then
+        local h=getHum()
+        if h and h.JumpPower~=S.JumpVal then h.UseJumpPower=true h.JumpPower=S.JumpVal end
+    end
 
--- Xuyên tường
-if S.Noclip then
-local c=LP.Character
-if c then for _,p in ipairs(c:GetDescendants()) do
-if p:IsA("BasePart") and p.CanCollide then p.CanCollide=false end end end end
+    -- Xuyên tường
+    if S.Noclip then
+        local c=LP.Character
+        if c then for _,p in ipairs(c:GetDescendants()) do
+            if p:IsA("BasePart") and p.CanCollide then p.CanCollide=false end
+        end end
+    end
 
--- Bay
-if S.FlyOn and not flyLV then startFly() end
-if not S.FlyOn and flyLV then stopFly() end
+    -- Bay
+    if S.FlyOn and not flyLV then startFly() end
+    if not S.FlyOn and flyLV then stopFly() end
 
--- Bắn khi thấy tâm
-if S.TriggerBot and target then
-local sp=w2s(target.Position)
-if (sp-camCenter).Magnitude<12 then sendM1() end end
+    -- Trigger bot
+    if S.TriggerBot and target then
+        local sp=w2s(target.Position)
+        if (sp-camCenter).Magnitude<12 then sendM1() end
+    end
 
--- Nhân vật cầu vồng
-if S.RainbowChar then
-local c=LP.Character
-if c then for _,p in ipairs(c:GetDescendants()) do
-if p:IsA("BasePart") then pcall(function() p.Color=rainbow(0.1) end) end end end end
+    -- Nhân vật cầu vồng
+    if S.RainbowChar then
+        local c=LP.Character
+        if c then for _,p in ipairs(c:GetDescendants()) do
+            if p:IsA("BasePart") then pcall(function() p.Color=rainbow(0.1) end) end
+        end end
+    end
 
--- Watermark
-if S.WMOn then
-local fps=math.floor(1/math.max(dt,1e-4))
-WM.Text=string.format("ONE SHOT v9 | %d FPS | Mục Tiêu: %s",fps,target and "✓" or "—") end
+    -- Watermark
+    if S.WMOn then
+        local fps=math.floor(1/math.max(dt,1e-4))
+        WM.Text=string.format("ONE SHOT v11 | %d FPS | Mục Tiêu: %s",fps,target and "✓" or "—")
+    end
+end)
+table.insert(conns,c7)
+
+local c8=RS.Heartbeat:Connect(function()
+    if S.AntiVoid then
+        local c=LP.Character
+        local hrp=c and c:FindFirstChild("HumanoidRootPart")
+        if hrp and hrp.Position.Y<-100 then
+            hrp.CFrame=CFrame.new(0,50,0)
+        end
+    end
+end)
+table.insert(conns,c8)
+
+local c9=UIS.JumpRequest:Connect(function()
+    if S.InfJump or S.Bunny then
+        local h=getHum() if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end)
+table.insert(conns,c9)
+
+local c10=UIS.InputBegan:Connect(function(i,gp)
+    if gp then return end
+    if i.KeyCode==Enum.KeyCode.RightShift then
+        if Main.Visible then
+            Main.Visible=false Handle.Visible=true
+            Tween:Create(blur,TweenInfo.new(0.3),{Size=16}):Play()
+        else
+            Main.Visible=true Handle.Visible=false
+            Tween:Create(blur,TweenInfo.new(0.3),{Size=0}):Play()
+        end
+    end
+end)
+table.insert(conns,c10)
+
+-- Auto hook khi script load
+task.spawn(function()
+    task.wait(1)
+    if getWeaponManager() then
+        notify("One Shot v11","Đã tìm thấy WeaponManager!")
+    else
+        notify("One Shot v11","Không tìm thấy WeaponManager (một số tính năng có thể không chạy)")
+    end
 end)
 
--- Chống rớt map
-RS.Heartbeat:Connect(function()
-if S.AntiVoid then
-local c=LP.Character
-local hrp=c and c:FindFirstChild("HumanoidRootPart")
-if hrp and hrp.Position.Y<-100 then
-hrp.CFrame=CFrame.new(0,50,0) end end end)
-
--- Nhảy vô hạn / bunny
-UIS.JumpRequest:Connect(function()
-if S.InfJump or S.Bunny then
-local h=getHum() if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end end end)
-
--- Phím tắt RightShift
-UIS.InputBegan:Connect(function(i,gp)
-if gp then return end
-if i.KeyCode==Enum.KeyCode.RightShift then
-if Main.Visible then
-Main.Visible=false Handle.Visible=true
-Tween:Create(blur,TweenInfo.new(0.3),{Size=16}):Play()
-else
-Main.Visible=true Handle.Visible=false
-Tween:Create(blur,TweenInfo.new(0.3),{Size=0}):Play() end end end)
-
-notify("One Shot v9","Đã load! RightShift = ẩn/hiện. Bấm − để thu nhỏ.")
+notify("One Shot v11","Đã load! RightShift = ẩn/hiện. Nhấn × để gỡ và reset.")
